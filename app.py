@@ -4,8 +4,8 @@
 import random
 import threading
 import time
-import os  # <<< YENİ: Çevre değişkenleri için
-import requests  # <<< YENİ: API çağrıları için
+import os       
+import requests 
 from flask import Flask, render_template_string, request, session, redirect, url_for, jsonify
 
 # Flask uygulamasını başlatma
@@ -16,19 +16,18 @@ app.secret_key = "gizli_tavuk"
 lock = threading.Lock()
 
 # --- JSONBin.io Yapılandırması (Çevre Değişkenleri) ---
-# Render'da ayarlanması gereken hassas bilgiler
-API_KEY = os.environ.get("API_KEY")
+API_KEY = os.environ.get("API_KEY") 
 BIN_ID = os.environ.get("BIN_ID")
 API_URL = f"https://api.jsonbin.io/v3/b/{BIN_ID}" if BIN_ID else None
 HEADERS = {
     "Content-Type": "application/json",
-    "X-Master-Key": API_KEY
+    "X-Master-Key": API_KEY 
 }
 # --- /JSONBin.io Yapılandırması ---
 
-MAX_MEILLE_LEVEL = 25
+MAX_MEILLE_LEVEL = 25 
 
-# BAŞLANGIÇ VERİLERİ (API erişimi başarısız olursa veya boş gelirse kullanılır)
+# BAŞLANGIÇ VERİLERİ (Tüm anahtarların listesi)
 INITIAL_STATE = {
     "fiyat": 10,
     "dusme_meille_seviye": 0,
@@ -40,63 +39,84 @@ INITIAL_STATE = {
     }
 }
 
-
 # --- Kalıcı Depolama Fonksiyonları (İnternet Üzerinden) ---
 
 def load_data():
-    """İnternetteki JSON deposundan verileri yükler."""
+    """
+    İnternetteki JSON deposundan verileri yükler. 
+    API'den gelen veriyi INITIAL_STATE ile birleştirerek eksik anahtar hatalarını önler.
+    """
+    global INITIAL_STATE
+    
     if not API_KEY or not BIN_ID:
         print("UYARI: API Anahtarları ayarlanmamış. Varsayılan veriler kullanılıyor.")
-        return INITIAL_STATE
-
+        return INITIAL_STATE.copy()
+        
     try:
         response = requests.get(API_URL, headers=HEADERS, timeout=10)
-        response.raise_for_status()
-        data = response.json().get('record', INITIAL_STATE)
+        response.raise_for_status() 
+        api_record = response.json().get('record', {})
+        
+        # Ana durumu (INITIAL_STATE) kopyala
+        loaded_data = INITIAL_STATE.copy()
+        
+        # API'den gelen veriyi güvenli bir şekilde ana durumun üzerine yaz
+        # Bu, API'den gelen veri eksik olsa bile KeyError vermeyi engeller.
+        loaded_data.update(api_record)
+        
+        # Özellikle 'users' sözlüğünü derinlemesine güncelle (Varsayılan admin/testuser'ı korumak için)
+        if 'users' not in loaded_data or not isinstance(loaded_data['users'], dict):
+             loaded_data['users'] = {}
 
-        # Kritik kullanıcıların varlığını kontrol et (Admin ve testuser)
-        if 'users' not in data: data['users'] = {}
+        # Başlangıç kullanıcılarını ekle (Üzerine yazılmaz)
         for user_key, user_data in INITIAL_STATE['users'].items():
-            if user_key not in data['users']:
-                data['users'][user_key] = user_data
+            if user_key not in loaded_data['users']:
+                loaded_data['users'][user_key] = user_data
+        
+        loaded_data.get('log_kaydi', []).append("🔄 Sunucu yeniden başlatıldı. Veriler internetten yüklendi.")
+        
+        # Gerekli anahtarların varlığını son kez kontrol et (Bu durumda gerek kalmaz ama sağlamlık için iyidir)
+        for key in INITIAL_STATE.keys():
+            if key not in loaded_data:
+                loaded_data[key] = INITIAL_STATE[key]
 
-        data.get('log_kaydi', []).append("🔄 Sunucu yeniden başlatıldı. Veriler internetten yüklendi.")
-        return data
-
+        return loaded_data
+        
     except requests.exceptions.RequestException as e:
         error_info = f"{e}"
         if 'response' in locals() and hasattr(response, 'status_code'):
-            error_info = f"{response.status_code} - {response.text}"
+             error_info = f"{response.status_code} - {response.text}"
         print(f"HATA: Veri yüklenirken istek hatası oluştu. Varsayılan veriler kullanılıyor. Hata: {error_info}")
-        return INITIAL_STATE
+        return INITIAL_STATE.copy()
     except Exception as e:
         print(f"HATA: Veri yüklenirken beklenmeyen hata oluştu. Varsayılan veriler kullanılıyor. Hata: {e}")
-        return INITIAL_STATE
+        return INITIAL_STATE.copy()
 
 
 def save_data():
-    """Tüm önemli verileri internetteki JSON deposuna kaydeder (Fiyat, Bakiye, Ayarlar, Loglar)."""
+    """Tüm önemli verileri internetteki JSON deposuna kaydeder."""
     if not API_KEY or not BIN_ID:
         return
 
     global fiyat, dusme_meille_seviye, yukselme_meille_seviye, users, log_kaydi
-
+    
     # Logların sadece son 100 kaydını kaydederek depoyu temiz tutma
     data_to_save = {
         "fiyat": fiyat,
         "dusme_meille_seviye": dusme_meille_seviye,
         "yukselme_meille_seviye": yukselme_meille_seviye,
         "users": users,
-        "log_kaydi": log_kaydi[-100:]
+        "log_kaydi": log_kaydi[-100:] 
     }
-
+    
     try:
+        # API'den gelen 401 hatası düzelmediyse, anahtarlarınızı kontrol edin!
         requests.put(API_URL, json=data_to_save, headers=HEADERS, timeout=10)
     except requests.exceptions.RequestException:
         pass
 
-
 # --- Uygulama Başlangıcı: Verileri Yükle ---
+# Hatanın meydana geldiği kısım, şimdi düzeltilmiş load_data ile daha güvenli
 app_data = load_data()
 
 # Global değişkenleri yüklenen verilerle başlatma
@@ -110,8 +130,8 @@ log_kaydi = app_data.get("log_kaydi", [])
 log_kaydi = log_kaydi[-100:]
 
 # Simülasyon değişkenleri (Kalıcı değil, memory'de tutulur)
-simulasyon_aktif = False
-kalan_sure = 0
+simulasyon_aktif = False 
+kalan_sure = 0 
 
 
 # Fiyat simülasyonu fonksiyonu
@@ -132,7 +152,7 @@ def simulasyonu_baslat(sure, baslangic=None):
         if simulasyon_aktif:
             log_kaydi.append("⚠️ Simülasyon zaten aktif! Yeni süre eklendi.")
             kalan_sure += sure
-            save_data()  # <<< SÜRE EKLENDİĞİNDE KAYDET
+            save_data() 
             return
 
         simulasyon_aktif = True
@@ -141,18 +161,17 @@ def simulasyonu_baslat(sure, baslangic=None):
     # Simülasyonu arka planda çalıştır
     threading.Thread(target=_simulasyon_dongusu, args=(sure,), daemon=True).start()
 
-
 def _simulasyon_dongusu(sure):
     global fiyat, log_kaydi, simulasyon_aktif, kalan_sure
     global dusme_meille_seviye, yukselme_meille_seviye
-
+    
     for saniye in range(1, sure + 1):
         time.sleep(1)
         with lock:
             if not simulasyon_aktif:
                 log_kaydi.append("⏹ Simülasyon erken durduruldu.")
                 break
-
+                
             # Olasılıklar: -2, -1, 0, 1, 2
             olasiliklar = [-2, -1, 0, 1, 2]
             agirliklar = [1, 1, 1, 1, 1]
@@ -170,8 +189,8 @@ def _simulasyon_dongusu(sure):
 
             yeni_fiyat = fiyat + secim
             fiyat = max(1, yeni_fiyat)
-
-            save_data()  # <<< HER TİKTE KAYDET
+            
+            save_data() # <<< HER TİKTE KAYDET
 
             log_kaydi.append(
                 f"📈 PİYASA | Fiyat: {fiyat} Elmas (Değişim: {secim:+.0f}) (D: {dusme_meille_seviye}/{MAX_MEILLE_LEVEL}, Y: {yukselme_meille_seviye}/{MAX_MEILLE_LEVEL})")
@@ -182,8 +201,7 @@ def _simulasyon_dongusu(sure):
         simulasyon_aktif = False
         kalan_sure = 0
         log_kaydi.append("⏹ Simülasyon durdu.")
-        save_data()  # <<< SİMÜLASYON DURDUĞUNDA KAYDET
-
+        save_data() # <<< SİMÜLASYON DURDUĞUNDA KAYDET
 
 # HTML şablonu (Kullanıcının sağladığı UI)
 HTML = '''
@@ -719,8 +737,8 @@ def index():
 @app.route("/status")
 def status():
     # log_kaydi'nı ters çevirip son 50 kaydı gönder
-    log_display = "\n".join(log_kaydi[::-1][:50])
-
+    log_display = "\n".join(log_kaydi[::-1][:50]) 
+    
     response_data = {
         "fiyat": fiyat,
         "log": log_display,
@@ -765,7 +783,7 @@ def login():
 def logout():
     if session.get("username"):
         log_kaydi.append(f"👋 Kullanıcı '{session['username']}' çıkış yaptı.")
-        save_data()  # <<< ÇIKIŞTA KAYDET
+        save_data() 
     session.pop("giris_tavuk", None)
     session.pop("username", None)
     session.pop("is_admin", None)
@@ -804,7 +822,7 @@ def register_user():
             'is_admin': False
         }
         log_kaydi.append(f"👤 ADMIN | Yeni kullanıcı '{username}' oluşturuldu. Bakiye: {initial_elmas} Elmas.")
-        save_data()  # <<< KULLANICI OLUŞTURULDUĞUNDA KAYDET
+        save_data() 
 
     return jsonify({"success": True, "message": f"Kullanıcı '{username}' başarıyla oluşturuldu."})
 
@@ -857,7 +875,7 @@ def update_user_balance():
                             "message": "Herhangi bir değişiklik yapılmadı (Yeni değerler mevcut değerlerle aynı). "}), 400
 
         log_kaydi.append(log_message.strip().rstrip(','))
-        save_data()  # <<< BAKİYE GÜNCELLENDİĞİNDE KAYDET
+        save_data() 
 
         return jsonify({"success": True, "message": f"'{username}' kullanıcısının bakiyesi başarıyla güncellendi."})
 
@@ -878,7 +896,7 @@ def devam():
     except:
         sure = 20
         baslangic = None
-
+        
     # Başlangıç fiyatı belirlenirse bu bir "kaydetme" eylemidir.
     if baslangic:
         with lock:
@@ -894,9 +912,9 @@ def devam():
 def durdur():
     if not session.get("is_admin"): return "Yetkisiz", 403
     global simulasyon_aktif
-    with lock:
+    with lock: 
         simulasyon_aktif = False
-        save_data()  # <<< DURDURMA EYLEMİNDE KAYDET
+        save_data() 
     return ('', 204)
 
 
@@ -907,7 +925,7 @@ def temizle():
     with lock:
         log_kaydi.clear()
         log_kaydi.append("🧹 Log temizlendi.")
-        save_data()  # <<< LOG TEMİZLENDİĞİNDE KAYDET
+        save_data() 
     return ('', 204)
 
 
@@ -920,7 +938,7 @@ def meille_dusme_artir():
         if dusme_meille_seviye < MAX_MEILLE_LEVEL:
             dusme_meille_seviye += 1
         if yukselme_meille_seviye != 0: yukselme_meille_seviye = 0
-        save_data()  # <<< AYAR DEĞİŞTİĞİNDE KAYDET
+        save_data() 
     return ('', 204)
 
 
@@ -930,7 +948,7 @@ def meille_dusme_azalt():
     global dusme_meille_seviye
     with lock:
         if dusme_meille_seviye > 0: dusme_meille_seviye -= 1
-        save_data()  # <<< AYAR DEĞİŞTİĞİNDE KAYDET
+        save_data() 
     return ('', 204)
 
 
@@ -942,7 +960,7 @@ def meille_yukselme_artir():
         if yukselme_meille_seviye < MAX_MEILLE_LEVEL:
             yukselme_meille_seviye += 1
         if dusme_meille_seviye != 0: dusme_meille_seviye = 0
-        save_data()  # <<< AYAR DEĞİŞTİĞİNDE KAYDET
+        save_data() 
     return ('', 204)
 
 
@@ -952,7 +970,7 @@ def meille_yukselme_azalt():
     global yukselme_meille_seviye
     with lock:
         if yukselme_meille_seviye > 0: yukselme_meille_seviye -= 1
-        save_data()  # <<< AYAR DEĞİŞTİĞİNDE KAYDET
+        save_data() 
     return ('', 204)
 
 
@@ -986,7 +1004,7 @@ def trade():
                 user['tavukbit'] += amount
                 log_kaydi.append(
                     f"➡️ ALIM | {username} {amount} TAVUKBIT aldı. Bakiye: {user['elmas']} Elmas. (Fiyat: {current_price})")
-                save_data()  # <<< ALIMDA KAYDET
+                save_data() 
                 return jsonify({"success": True, "message": f"{amount} TAVUKBIT ({cost} Elmas) başarıyla alındı."})
             else:
                 return jsonify({"success": False, "message": "Yetersiz Elmas bakiyesi."}), 400
@@ -998,7 +1016,7 @@ def trade():
                 user['tavukbit'] -= amount
                 log_kaydi.append(
                     f"⬅️ SATIM | {username} {amount} TAVUKBIT sattı. Bakiye: {user['elmas']} Elmas. (Fiyat: {current_price})")
-                save_data()  # <<< SATIMDA KAYDET
+                save_data() 
                 return jsonify({"success": True, "message": f"{amount} TAVUKBIT ({revenue} Elmas) başarıyla satıldı."})
             else:
                 return jsonify({"success": False, "message": "Yetersiz TAVUKBIT bakiyesi."}), 400
